@@ -233,6 +233,21 @@ std::string runCommandWithInputExec(const std::string& command, const std::vecto
     return result;
 }
 
+std::string getTextBetweenSubstrings(const std::string& text, const std::string& start, const std::string& end) {
+    std::string lowerText = toLowerCase(text);
+    std::string lowerStart = toLowerCase(start);
+    std::string lowerEnd = toLowerCase(end);
+
+    size_t startPos = lowerText.find(lowerStart);
+    size_t endPos = lowerText.find(lowerEnd, startPos + lowerStart.length());
+
+    if (startPos != std::string::npos && endPos != std::string::npos) {
+        return text.substr(startPos + lowerStart.length(), endPos - (startPos + lowerStart.length()));
+    } else {
+        return "";
+    }
+}
+
 std::string runCommandWithInputPipe(const std::string& command, const std::string& input) {
     std::string result;
 
@@ -381,6 +396,9 @@ int main(int argc, char ** argv) {
     auto t_last  = std::chrono::high_resolution_clock::now();
     const auto t_start = t_last;
 
+
+    std::string last_transcript = "";
+
     // main audio loop
     while (is_running) {
         if (params.save_audio) {
@@ -505,7 +523,25 @@ int main(int argc, char ** argv) {
                     const char * text = whisper_full_get_segment_text(ctx, i);
 
                     if (params.no_timestamps) {
-                        printf("%s", text);
+                        printf("BB %s", text);
+
+                        last_transcript += toLowerCase(text);
+                        if (containsSubstring(last_transcript, "i need to") && containsSubstring(last_transcript, "i believe")) {
+                            std::string gpt_input = getTextBetweenSubstrings(last_transcript, "i need to", "i believe");
+                            last_transcript = ""; // Reset last_transcript
+
+                            std::cout << "\n\n" + gpt_input + "\n\n" << std::endl;
+                            try {
+                                std::string commandwoargs = "/opt/homebrew/bin/chatgpt"; // Update this with the correct path
+                                std::vector<std::string> args = {};
+
+                                std::string output = runCommandWithQuotedArg(commandwoargs, gpt_input);
+                                std::cout << "Output from   :" << std::endl << output << std::endl;
+                            } catch (const std::exception& e) {
+                                std::cerr << "Error: " << e.what() << std::endl;
+                            }
+                        }
+
                         fflush(stdout);
 
                         if (params.fname_out.length() > 0) {
