@@ -26,7 +26,14 @@ bool audio_async::init(int capture_id, int sample_rate) {
         int nDevices = SDL_GetNumAudioDevices(SDL_TRUE);
         fprintf(stderr, "%s: found %d capture devices:\n", __func__, nDevices);
         for (int i = 0; i < nDevices; i++) {
-            fprintf(stderr, "%s:    - Capture device #%d: '%s'\n", __func__, i, SDL_GetAudioDeviceName(i, SDL_TRUE));
+            const char * devStr = SDL_GetAudioDeviceName(i, SDL_TRUE);
+            std::string str(devStr);
+            fprintf(stderr, "%s:    - Capture device #%d: '%s'\n", __func__, i, devStr);
+            if (str.find("MacBook Pro Microphone") != std::string::npos) {
+                fprintf(stderr, "FOUND AND USING %s:    - Capture device #%d: '%s'\n", __func__, i, devStr);
+                capture_id = i;
+                break;
+            }
         }
     }
 

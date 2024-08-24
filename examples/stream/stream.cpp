@@ -12,7 +12,14 @@
 #include <thread>
 #include <vector>
 #include <fstream>
-
+#include <iostream>
+#include <string>
+#include <algorithm>
+#include <cctype>
+#include <memory>
+#include <stdexcept>
+#include <unistd.h>
+#include <sys/wait.h>
 
 // command-line parameters
 struct whisper_params {
@@ -111,6 +118,155 @@ void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & para
     fprintf(stderr, "  -fa,      --flash-attn    [%-7s] flash attention during inference\n",               params.flash_attn ? "true" : "false");
     fprintf(stderr, "\n");
 }
+
+
+// Function to convert a string to lower case
+std::string toLowerCase(const std::string& str) {
+    std::string lowerStr = str;
+    std::transform(lowerStr.begin(), lowerStr.end(), lowerStr.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return lowerStr;
+}
+
+// Function to check if a substring exists in a string
+bool containsSubstring(const std::string& str, const std::string& substr) {
+    return str.find(substr) != std::string::npos;
+}
+
+// Function to find the rest of the text after a substring (case insensitive)
+std::string getTextAfterSubstring(const std::string& text, const std::string& substr) {
+    std::string lowerText = toLowerCase(text);
+    std::string lowerSubstr = toLowerCase(substr);
+
+    size_t pos = lowerText.find(lowerSubstr);
+    if (pos != std::string::npos) {
+        // Found the substring, get the rest of the text
+        return text.substr(pos + lowerSubstr.length());
+    } else {
+        // Substring not found
+        return "";
+    }
+}
+
+
+std::string runCommandWithQuotedArg(const std::string& command, const std::string& arg) {
+    std::string result;
+    std::string fullCommand = command + " \"" + arg + "\"";
+
+    std::array<char, 128> buffer;
+    FILE* pipe = popen(fullCommand.c_str(), "r");
+    if (!pipe) {
+        throw std::runtime_error("popen() failed!");
+    }
+
+    try {
+        while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
+            result += buffer.data();
+        }
+    } catch (...) {
+        pclose(pipe);
+        throw;
+    }
+
+    int returnCode = pclose(pipe);
+    if (returnCode != 0) {
+        throw std::runtime_error("Command failed with return code " + std::to_string(returnCode));
+    }
+
+    return result;
+}
+
+// Function to run the external command and pipe input to it
+std::string runCommandWithInputExec(const std::string& command, const std::vector<std::string>& args, const std::string& input) {
+    std::string result;
+    int pipe_in[2];
+    int pipe_out[2];
+
+    if (pipe(pipe_in) == -1 || pipe(pipe_out) == -1) {
+        throw std::runtime_error("pipe() failed!");
+    }
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        throw std::runtime_error("fork() failed!");
+    } else if (pid == 0) {
+        // Child process
+        close(pipe_in[1]); // Close unused write end
+        dup2(pipe_in[0], STDIN_FILENO); // Redirect stdin
+        close(pipe_in[0]);
+
+        close(pipe_out[0]); // Close unused read end
+        dup2(pipe_out[1], STDOUT_FILENO); // Redirect stdout
+        close(pipe_out[1]);
+
+        // Prepare arguments for execvp
+        std::vector<char*> exec_args;
+        exec_args.push_back(const_cast<char*>(command.c_str()));
+        for (const auto& arg : args) {
+            exec_args.push_back(const_cast<char*>(arg.c_str()));
+        }
+        exec_args.push_back(nullptr); // Null-terminate the array
+
+        execvp(exec_args[0], exec_args.data());
+        _exit(EXIT_FAILURE); // execvp failed
+    } else {
+        // Parent process
+        close(pipe_in[0]); // Close unused read end
+        write(pipe_in[1], input.c_str(), input.size());
+        close(pipe_in[1]); // Done writing
+
+        close(pipe_out[1]); // Close unused write end
+        char buffer[128];
+        ssize_t bytes_read;
+        while ((bytes_read = read(pipe_out[0], buffer, sizeof(buffer))) > 0) {
+            result.append(buffer, bytes_read);
+        }
+        close(pipe_out[0]);
+
+        int status;
+        waitpid(pid, &status, 0);
+        if (status != 0) {
+            throw std::runtime_error("Command failed with status " + std::to_string(status));
+        }
+    }
+
+    return result;
+}
+
+std::string runCommandWithInputPipe(const std::string& command, const std::string& input) {
+    std::string result;
+
+    // Open a pipe to the command in write mode to send the input
+    FILE* pipe = popen((command + " 2>&1").c_str(), "w");
+    if (!pipe) {
+        throw std::runtime_error("popen() failed to open pipe for writing!");
+    }
+
+    // Write input to the pipe
+    fwrite(input.c_str(), sizeof(char), input.size(), pipe);
+    fclose(pipe); // Close the pipe after writing input
+
+    // Open a new pipe to read the output
+    pipe = popen((command + " 2>&1").c_str(), "r");
+    if (!pipe) {
+        throw std::runtime_error("popen() failed to open pipe for reading!");
+    }
+
+    // Read the output of the command
+    char buffer[128];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        result += buffer;
+    }
+
+    int returnCode = pclose(pipe);
+    if (returnCode != 0) {
+        throw std::runtime_error("Command failed with return code " + std::to_string(returnCode));
+    }
+
+    return result;
+}
+
+std::string lastRestOfText = "";
 
 int main(int argc, char ** argv) {
     whisper_params params;
@@ -339,9 +495,9 @@ int main(int argc, char ** argv) {
                     const int64_t t1 = (t_last - t_start).count()/1000000;
                     const int64_t t0 = std::max(0.0, t1 - pcmf32.size()*1000.0/WHISPER_SAMPLE_RATE);
 
-                    printf("\n");
-                    printf("### Transcription %d START | t0 = %d ms | t1 = %d ms\n", n_iter, (int) t0, (int) t1);
-                    printf("\n");
+                    // printf("\n");
+                    // printf("### Transcription %d START | t0 = %d ms | t1 = %d ms\n", n_iter, (int) t0, (int) t1);
+                    // printf("\n");
                 }
 
                 const int n_segments = whisper_full_n_segments(ctx);
@@ -359,15 +515,43 @@ int main(int argc, char ** argv) {
                         const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
                         const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
 
-                        std::string output = "[" + to_timestamp(t0, false) + " --> " + to_timestamp(t1, false) + "]  " + text;
+                        std::string output = "[" + to_timestamp(t0, false) + " S--> " + to_timestamp(t1, false) + "]  " + text;
 
-                        if (whisper_full_get_segment_speaker_turn_next(ctx, i)) {
-                            output += " [SPEAKER_TURN]";
+                        std::string lowerText = toLowerCase(text);
+                        std::string substring = "i need to";
+
+                        if (containsSubstring(lowerText, substring)) {
+                            std::string restOfText = getTextAfterSubstring(lowerText, substring);
+                            if (restOfText != lastRestOfText) {
+                                lastRestOfText = restOfText;
+
+                                std::cout << "\n\n" + restOfText + "\n\n" << std::endl;
+                                try {
+                                    // std::string command = "/opt/homebrew/bin/chatgpt -n";
+
+                                    std::string commandwoargs = "/opt/homebrew/bin/chatgpt"; // Update this with the correct path
+                                    std::vector<std::string> args = {};
+
+                                    std::string output = runCommandWithQuotedArg(commandwoargs, restOfText);
+                                    std::cout << "Output from   :" << std::endl << output << std::endl;
+                                } catch (const std::exception& e) {
+                                    std::cerr << "Error: " << e.what() << std::endl;
+                                }
+                            }
+                            // std::cout << "The string contains 'so I need to'." << std::endl;
+                        }
+                        else
+                        {
+                            // std::cout << "The string does not contain 'so I need to'." << std::endl;
                         }
 
-                        output += "\n";
+                        // if (whisper_full_get_segment_speaker_turn_next(ctx, i)) {
+                        //     output += " [SPEAKER_TURN]";
+                        // }
 
-                        printf("%s", output.c_str());
+                        // output += "\n";
+
+                        // printf("%s", output.c_str());
                         fflush(stdout);
 
                         if (params.fname_out.length() > 0) {
@@ -381,8 +565,8 @@ int main(int argc, char ** argv) {
                 }
 
                 if (use_vad) {
-                    printf("\n");
-                    printf("### Transcription %d END\n", n_iter);
+                    // printf("\n");
+                    // printf("### Transcription %d END\n", n_iter);
                 }
             }
 

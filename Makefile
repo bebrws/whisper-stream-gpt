@@ -815,6 +815,9 @@ LIB_COMMON_SDL_S = $(LIB_PRE)common-sdl.a
 LIB_ALL   = $(LIB_GGML)   $(LIB_WHISPER)   $(LIB_COMMON)   $(LIB_COMMON_SDL)
 LIB_ALL_S = $(LIB_GGML_S) $(LIB_WHISPER_S) $(LIB_COMMON_S) $(LIB_COMMON_SDL_S)
 
+
+libs: $(LIB_ALL_S)
+
 GF_CC := $(CC)
 include scripts/get-flags.mk
 

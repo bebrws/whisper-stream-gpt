@@ -6232,7 +6232,7 @@ int whisper_full_with_state(
 
                             if (params.print_realtime) {
                                 if (params.print_timestamps) {
-                                    printf("[%s --> %s]  %s\n", to_timestamp(tt0).c_str(), to_timestamp(tt1).c_str(), text.c_str());
+                                    printf("[%s 1--> %s]  %s\n", to_timestamp(tt0).c_str(), to_timestamp(tt1).c_str(), text.c_str());
                                 } else {
                                     printf("%s", text.c_str());
                                     fflush(stdout);
@@ -6279,7 +6279,7 @@ int whisper_full_with_state(
 
                     if (params.print_realtime) {
                         if (params.print_timestamps) {
-                            printf("[%s --> %s]  %s\n", to_timestamp(tt0).c_str(), to_timestamp(tt1).c_str(), text.c_str());
+                            printf("[%s 2--> %s]  %s\n", to_timestamp(tt0).c_str(), to_timestamp(tt1).c_str(), text.c_str());
                         } else {
                             printf("%s", text.c_str());
                             fflush(stdout);
