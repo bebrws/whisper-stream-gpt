@@ -1,3 +1,31 @@
+# Whisper.cpp Hacked Together with Children's Glue to ChatGPT
+
+I am currently looking for a job and have been exploring everything I can that might help me get the specific job or type of job that I want. I even considered using a service where people practice interviewing each other, which is not a bad idea.
+
+However, I came across a service that runs during your interviews and uses ChatGPT (or some other LLM) to listen and possibly even watch your screen as the interview progresses, providing you with exact answers to their questions.
+
+I checked out the site, and they were charging something like $150 per use, which seems crazy. I know I could build this myself.
+
+That’s why we have this repository. I’ve tried to make it as easy as possible to get started. I’ve included scripts to build and run the application.
+
+The application listens for a starting phrase (currently `“I need”`) and an ending phrase (currently `“I believe”`). These are configurable constants at the top of the file `examples/stream/stream.cpp`.
+
+I actually think that using a program or service like this could be a disservice to yourself during an interview for several reasons—mostly because interviews happen quickly, and you might need to stop and process the answer you’re receiving, potentially losing your train of thought.
+
+That said, if you’re asked a common question that you don’t need to know on a day-to-day basis (and one that’s been written about 1,000 times), it might actually be helpful.
+
+For example, you could say something like “I need to create a self-balancing binary tree, I believe,” and it would give you a great answer.
+
+I should probably add some text to the prompt to encourage concise answers, but this is something I built just because I was annoyed someone was charging $150 for that other service and wanted to hack something together.
+
+Give it a try!
+
+To get started. Just follow the quick start section below. Although `runStreamGPT.sh` is configured for using the ggml-medium.en.bin model which you can [find here](https://huggingface.co/ggerganov/whisper.cpp/tree/main). Put it in the root directory of this project.
+
+Run `makeStreamGPT.sh` to build the application and to run it: `runStreamGPT.sh`
+
+
+
 # whisper.cpp
 
 ![whisper.cpp](https://user-images.githubusercontent.com/1991296/235238348-05d0f6a4-da44-4900-a1de-d0707e75b763.jpeg)

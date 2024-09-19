@@ -21,66 +21,226 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+
+#include <iostream>
+#include <string>
+#include <curl/curl.h>
+#include <json/json.h> // Requires a JSON parsing library like jsoncpp
+
+
+const const char * SUPER_SECRET_START_STRING = "i need";
+const const char * SUPER_SECRET_END_STRING = "i believe";
+
+
+class OpenAIChatGPT {
+public:
+    OpenAIChatGPT(const std::string& api_key) : api_key(api_key) {}
+
+    std::string askQuestion(const std::string& question) {
+        CURL* curl;
+        CURLcode res;
+        std::string response_str;
+
+        // Initialize CURL
+        curl = curl_easy_init();
+        if(curl) {
+            struct curl_slist* headers = nullptr;
+            headers = curl_slist_append(headers, ("Authorization: Bearer " + api_key).c_str());
+            headers = curl_slist_append(headers, "Content-Type: application/json");
+
+            // Set URL for OpenAI's ChatGPT API
+            curl_easy_setopt(curl, CURLOPT_URL, "https://api.openai.com/v1/chat/completions");
+
+            // Set headers
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+            // Prepare JSON data for the request
+            std::string json_data = R"({
+                "model": "gpt-3.5-turbo",
+                "messages": [{
+                    "role": "user",
+                    "content": ")" + question + R"("
+                }]
+            })";
+
+            // Set the request body
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_data.c_str());
+
+            // Set callback function to capture response
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_str);
+
+            // Perform the request
+            res = curl_easy_perform(curl);
+
+            // Check for errors
+            if(res != CURLE_OK) {
+                fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            }
+
+            // Clean up
+            curl_easy_cleanup(curl);
+            curl_slist_free_all(headers);
+        }
+
+        // Parse the JSON response
+        return parseResponse(response_str);
+    }
+
+private:
+    std::string api_key;
+
+    // Callback to write response data into a string
+    static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
+        size_t totalSize = size * nmemb;
+        userp->append((char*)contents, totalSize);
+        return totalSize;
+    }
+
+    // Function to parse the JSON response and extract the answer
+    std::string parseResponse(const std::string& response_str) {
+        Json::Value jsonData;
+        Json::Reader jsonReader;
+
+        if (jsonReader.parse(response_str, jsonData)) {
+            return jsonData["choices"][0]["message"]["content"].asString();
+        } else {
+            return "Error parsing response.";
+        }
+    }
+};
+
+
+
+
+
+
+
 // command-line parameters
-struct whisper_params {
-    int32_t n_threads  = std::min(4, (int32_t) std::thread::hardware_concurrency());
-    int32_t step_ms    = 3000;
-    int32_t length_ms  = 10000;
-    int32_t keep_ms    = 200;
+struct whisper_params
+{
+    int32_t n_threads = std::min(4, (int32_t)std::thread::hardware_concurrency());
+    int32_t step_ms = 3000;
+    int32_t length_ms = 10000;
+    int32_t keep_ms = 200;
     int32_t capture_id = -1;
     int32_t max_tokens = 32;
-    int32_t audio_ctx  = 0;
+    int32_t audio_ctx = 0;
 
-    float vad_thold    = 0.6f;
-    float freq_thold   = 100.0f;
+    float vad_thold = 0.6f;
+    float freq_thold = 100.0f;
 
-    bool translate     = false;
-    bool no_fallback   = false;
+    bool translate = false;
+    bool no_fallback = false;
     bool print_special = false;
-    bool no_context    = true;
+    bool no_context = true;
     bool no_timestamps = false;
-    bool tinydiarize   = false;
-    bool save_audio    = false; // save audio to wav file
-    bool use_gpu       = true;
-    bool flash_attn    = false;
+    bool tinydiarize = false;
+    bool save_audio = false; // save audio to wav file
+    bool use_gpu = true;
+    bool flash_attn = false;
 
-    std::string language  = "en";
-    std::string model     = "models/ggml-base.en.bin";
+    std::string language = "en";
+    std::string model = "models/ggml-base.en.bin";
     std::string fname_out;
 };
 
-void whisper_print_usage(int argc, char ** argv, const whisper_params & params);
+void whisper_print_usage(int argc, char **argv, const whisper_params &params);
 
-static bool whisper_params_parse(int argc, char ** argv, whisper_params & params) {
-    for (int i = 1; i < argc; i++) {
+static bool whisper_params_parse(int argc, char **argv, whisper_params &params)
+{
+    for (int i = 1; i < argc; i++)
+    {
         std::string arg = argv[i];
 
-        if (arg == "-h" || arg == "--help") {
+        if (arg == "-h" || arg == "--help")
+        {
             whisper_print_usage(argc, argv, params);
             exit(0);
         }
-        else if (arg == "-t"    || arg == "--threads")       { params.n_threads     = std::stoi(argv[++i]); }
-        else if (                  arg == "--step")          { params.step_ms       = std::stoi(argv[++i]); }
-        else if (                  arg == "--length")        { params.length_ms     = std::stoi(argv[++i]); }
-        else if (                  arg == "--keep")          { params.keep_ms       = std::stoi(argv[++i]); }
-        else if (arg == "-c"    || arg == "--capture")       { params.capture_id    = std::stoi(argv[++i]); }
-        else if (arg == "-mt"   || arg == "--max-tokens")    { params.max_tokens    = std::stoi(argv[++i]); }
-        else if (arg == "-ac"   || arg == "--audio-ctx")     { params.audio_ctx     = std::stoi(argv[++i]); }
-        else if (arg == "-vth"  || arg == "--vad-thold")     { params.vad_thold     = std::stof(argv[++i]); }
-        else if (arg == "-fth"  || arg == "--freq-thold")    { params.freq_thold    = std::stof(argv[++i]); }
-        else if (arg == "-tr"   || arg == "--translate")     { params.translate     = true; }
-        else if (arg == "-nf"   || arg == "--no-fallback")   { params.no_fallback   = true; }
-        else if (arg == "-ps"   || arg == "--print-special") { params.print_special = true; }
-        else if (arg == "-kc"   || arg == "--keep-context")  { params.no_context    = false; }
-        else if (arg == "-l"    || arg == "--language")      { params.language      = argv[++i]; }
-        else if (arg == "-m"    || arg == "--model")         { params.model         = argv[++i]; }
-        else if (arg == "-f"    || arg == "--file")          { params.fname_out     = argv[++i]; }
-        else if (arg == "-tdrz" || arg == "--tinydiarize")   { params.tinydiarize   = true; }
-        else if (arg == "-sa"   || arg == "--save-audio")    { params.save_audio    = true; }
-        else if (arg == "-ng"   || arg == "--no-gpu")        { params.use_gpu       = false; }
-        else if (arg == "-fa"   || arg == "--flash-attn")    { params.flash_attn    = true; }
+        else if (arg == "-t" || arg == "--threads")
+        {
+            params.n_threads = std::stoi(argv[++i]);
+        }
+        else if (arg == "--step")
+        {
+            params.step_ms = std::stoi(argv[++i]);
+        }
+        else if (arg == "--length")
+        {
+            params.length_ms = std::stoi(argv[++i]);
+        }
+        else if (arg == "--keep")
+        {
+            params.keep_ms = std::stoi(argv[++i]);
+        }
+        else if (arg == "-c" || arg == "--capture")
+        {
+            params.capture_id = std::stoi(argv[++i]);
+        }
+        else if (arg == "-mt" || arg == "--max-tokens")
+        {
+            params.max_tokens = std::stoi(argv[++i]);
+        }
+        else if (arg == "-ac" || arg == "--audio-ctx")
+        {
+            params.audio_ctx = std::stoi(argv[++i]);
+        }
+        else if (arg == "-vth" || arg == "--vad-thold")
+        {
+            params.vad_thold = std::stof(argv[++i]);
+        }
+        else if (arg == "-fth" || arg == "--freq-thold")
+        {
+            params.freq_thold = std::stof(argv[++i]);
+        }
+        else if (arg == "-tr" || arg == "--translate")
+        {
+            params.translate = true;
+        }
+        else if (arg == "-nf" || arg == "--no-fallback")
+        {
+            params.no_fallback = true;
+        }
+        else if (arg == "-ps" || arg == "--print-special")
+        {
+            params.print_special = true;
+        }
+        else if (arg == "-kc" || arg == "--keep-context")
+        {
+            params.no_context = false;
+        }
+        else if (arg == "-l" || arg == "--language")
+        {
+            params.language = argv[++i];
+        }
+        else if (arg == "-m" || arg == "--model")
+        {
+            params.model = argv[++i];
+        }
+        else if (arg == "-f" || arg == "--file")
+        {
+            params.fname_out = argv[++i];
+        }
+        else if (arg == "-tdrz" || arg == "--tinydiarize")
+        {
+            params.tinydiarize = true;
+        }
+        else if (arg == "-sa" || arg == "--save-audio")
+        {
+            params.save_audio = true;
+        }
+        else if (arg == "-ng" || arg == "--no-gpu")
+        {
+            params.use_gpu = false;
+        }
+        else if (arg == "-fa" || arg == "--flash-attn")
+        {
+            params.flash_attn = true;
+        }
 
-        else {
+        else
+        {
             fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             whisper_print_usage(argc, argv, params);
             exit(0);
@@ -90,150 +250,73 @@ static bool whisper_params_parse(int argc, char ** argv, whisper_params & params
     return true;
 }
 
-void whisper_print_usage(int /*argc*/, char ** argv, const whisper_params & params) {
+void whisper_print_usage(int /*argc*/, char **argv, const whisper_params &params)
+{
     fprintf(stderr, "\n");
     fprintf(stderr, "usage: %s [options]\n", argv[0]);
     fprintf(stderr, "\n");
     fprintf(stderr, "options:\n");
     fprintf(stderr, "  -h,       --help          [default] show this help message and exit\n");
-    fprintf(stderr, "  -t N,     --threads N     [%-7d] number of threads to use during computation\n",    params.n_threads);
-    fprintf(stderr, "            --step N        [%-7d] audio step size in milliseconds\n",                params.step_ms);
-    fprintf(stderr, "            --length N      [%-7d] audio length in milliseconds\n",                   params.length_ms);
-    fprintf(stderr, "            --keep N        [%-7d] audio to keep from previous step in ms\n",         params.keep_ms);
-    fprintf(stderr, "  -c ID,    --capture ID    [%-7d] capture device ID\n",                              params.capture_id);
-    fprintf(stderr, "  -mt N,    --max-tokens N  [%-7d] maximum number of tokens per audio chunk\n",       params.max_tokens);
-    fprintf(stderr, "  -ac N,    --audio-ctx N   [%-7d] audio context size (0 - all)\n",                   params.audio_ctx);
-    fprintf(stderr, "  -vth N,   --vad-thold N   [%-7.2f] voice activity detection threshold\n",           params.vad_thold);
-    fprintf(stderr, "  -fth N,   --freq-thold N  [%-7.2f] high-pass frequency cutoff\n",                   params.freq_thold);
-    fprintf(stderr, "  -tr,      --translate     [%-7s] translate from source language to english\n",      params.translate ? "true" : "false");
+    fprintf(stderr, "  -t N,     --threads N     [%-7d] number of threads to use during computation\n", params.n_threads);
+    fprintf(stderr, "            --step N        [%-7d] audio step size in milliseconds\n", params.step_ms);
+    fprintf(stderr, "            --length N      [%-7d] audio length in milliseconds\n", params.length_ms);
+    fprintf(stderr, "            --keep N        [%-7d] audio to keep from previous step in ms\n", params.keep_ms);
+    fprintf(stderr, "  -c ID,    --capture ID    [%-7d] capture device ID\n", params.capture_id);
+    fprintf(stderr, "  -mt N,    --max-tokens N  [%-7d] maximum number of tokens per audio chunk\n", params.max_tokens);
+    fprintf(stderr, "  -ac N,    --audio-ctx N   [%-7d] audio context size (0 - all)\n", params.audio_ctx);
+    fprintf(stderr, "  -vth N,   --vad-thold N   [%-7.2f] voice activity detection threshold\n", params.vad_thold);
+    fprintf(stderr, "  -fth N,   --freq-thold N  [%-7.2f] high-pass frequency cutoff\n", params.freq_thold);
+    fprintf(stderr, "  -tr,      --translate     [%-7s] translate from source language to english\n", params.translate ? "true" : "false");
     fprintf(stderr, "  -nf,      --no-fallback   [%-7s] do not use temperature fallback while decoding\n", params.no_fallback ? "true" : "false");
-    fprintf(stderr, "  -ps,      --print-special [%-7s] print special tokens\n",                           params.print_special ? "true" : "false");
-    fprintf(stderr, "  -kc,      --keep-context  [%-7s] keep context between audio chunks\n",              params.no_context ? "false" : "true");
-    fprintf(stderr, "  -l LANG,  --language LANG [%-7s] spoken language\n",                                params.language.c_str());
-    fprintf(stderr, "  -m FNAME, --model FNAME   [%-7s] model path\n",                                     params.model.c_str());
-    fprintf(stderr, "  -f FNAME, --file FNAME    [%-7s] text output file name\n",                          params.fname_out.c_str());
-    fprintf(stderr, "  -tdrz,    --tinydiarize   [%-7s] enable tinydiarize (requires a tdrz model)\n",     params.tinydiarize ? "true" : "false");
-    fprintf(stderr, "  -sa,      --save-audio    [%-7s] save the recorded audio to a file\n",              params.save_audio ? "true" : "false");
-    fprintf(stderr, "  -ng,      --no-gpu        [%-7s] disable GPU inference\n",                          params.use_gpu ? "false" : "true");
-    fprintf(stderr, "  -fa,      --flash-attn    [%-7s] flash attention during inference\n",               params.flash_attn ? "true" : "false");
+    fprintf(stderr, "  -ps,      --print-special [%-7s] print special tokens\n", params.print_special ? "true" : "false");
+    fprintf(stderr, "  -kc,      --keep-context  [%-7s] keep context between audio chunks\n", params.no_context ? "false" : "true");
+    fprintf(stderr, "  -l LANG,  --language LANG [%-7s] spoken language\n", params.language.c_str());
+    fprintf(stderr, "  -m FNAME, --model FNAME   [%-7s] model path\n", params.model.c_str());
+    fprintf(stderr, "  -f FNAME, --file FNAME    [%-7s] text output file name\n", params.fname_out.c_str());
+    fprintf(stderr, "  -tdrz,    --tinydiarize   [%-7s] enable tinydiarize (requires a tdrz model)\n", params.tinydiarize ? "true" : "false");
+    fprintf(stderr, "  -sa,      --save-audio    [%-7s] save the recorded audio to a file\n", params.save_audio ? "true" : "false");
+    fprintf(stderr, "  -ng,      --no-gpu        [%-7s] disable GPU inference\n", params.use_gpu ? "false" : "true");
+    fprintf(stderr, "  -fa,      --flash-attn    [%-7s] flash attention during inference\n", params.flash_attn ? "true" : "false");
     fprintf(stderr, "\n");
 }
 
-
 // Function to convert a string to lower case
-std::string toLowerCase(const std::string& str) {
+std::string toLowerCase(const std::string &str)
+{
     std::string lowerStr = str;
     std::transform(lowerStr.begin(), lowerStr.end(), lowerStr.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
+                   [](unsigned char c)
+                   { return std::tolower(c); });
     return lowerStr;
 }
 
 // Function to check if a substring exists in a string
-bool containsSubstring(const std::string& str, const std::string& substr) {
+bool containsSubstring(const std::string &str, const std::string &substr)
+{
     return str.find(substr) != std::string::npos;
 }
 
 // Function to find the rest of the text after a substring (case insensitive)
-std::string getTextAfterSubstring(const std::string& text, const std::string& substr) {
+std::string getTextAfterSubstring(const std::string &text, const std::string &substr)
+{
     std::string lowerText = toLowerCase(text);
     std::string lowerSubstr = toLowerCase(substr);
 
     size_t pos = lowerText.find(lowerSubstr);
-    if (pos != std::string::npos) {
+    if (pos != std::string::npos)
+    {
         // Found the substring, get the rest of the text
         return text.substr(pos + lowerSubstr.length());
-    } else {
+    }
+    else
+    {
         // Substring not found
         return "";
     }
 }
 
-
-std::string runCommandWithQuotedArg(const std::string& command, const std::string& arg) {
-    std::string result;
-    std::string fullCommand = command + " \"" + arg + "\"";
-
-    std::array<char, 128> buffer;
-    FILE* pipe = popen(fullCommand.c_str(), "r");
-    if (!pipe) {
-        throw std::runtime_error("popen() failed!");
-    }
-
-    try {
-        while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) {
-            result += buffer.data();
-        }
-    } catch (...) {
-        pclose(pipe);
-        throw;
-    }
-
-    int returnCode = pclose(pipe);
-    if (returnCode != 0) {
-        throw std::runtime_error("Command failed with return code " + std::to_string(returnCode));
-    }
-
-    return result;
-}
-
-// Function to run the external command and pipe input to it
-std::string runCommandWithInputExec(const std::string& command, const std::vector<std::string>& args, const std::string& input) {
-    std::string result;
-    int pipe_in[2];
-    int pipe_out[2];
-
-    if (pipe(pipe_in) == -1 || pipe(pipe_out) == -1) {
-        throw std::runtime_error("pipe() failed!");
-    }
-
-    pid_t pid = fork();
-    if (pid == -1) {
-        throw std::runtime_error("fork() failed!");
-    } else if (pid == 0) {
-        // Child process
-        close(pipe_in[1]); // Close unused write end
-        dup2(pipe_in[0], STDIN_FILENO); // Redirect stdin
-        close(pipe_in[0]);
-
-        close(pipe_out[0]); // Close unused read end
-        dup2(pipe_out[1], STDOUT_FILENO); // Redirect stdout
-        close(pipe_out[1]);
-
-        // Prepare arguments for execvp
-        std::vector<char*> exec_args;
-        exec_args.push_back(const_cast<char*>(command.c_str()));
-        for (const auto& arg : args) {
-            exec_args.push_back(const_cast<char*>(arg.c_str()));
-        }
-        exec_args.push_back(nullptr); // Null-terminate the array
-
-        execvp(exec_args[0], exec_args.data());
-        _exit(EXIT_FAILURE); // execvp failed
-    } else {
-        // Parent process
-        close(pipe_in[0]); // Close unused read end
-        write(pipe_in[1], input.c_str(), input.size());
-        close(pipe_in[1]); // Done writing
-
-        close(pipe_out[1]); // Close unused write end
-        char buffer[128];
-        ssize_t bytes_read;
-        while ((bytes_read = read(pipe_out[0], buffer, sizeof(buffer))) > 0) {
-            result.append(buffer, bytes_read);
-        }
-        close(pipe_out[0]);
-
-        int status;
-        waitpid(pid, &status, 0);
-        if (status != 0) {
-            throw std::runtime_error("Command failed with status " + std::to_string(status));
-        }
-    }
-
-    return result;
-}
-
-std::string getTextBetweenSubstrings(const std::string& text, const std::string& start, const std::string& end) {
+std::string getTextBetweenSubstrings(const std::string &text, const std::string &start, const std::string &end)
+{
     std::string lowerText = toLowerCase(text);
     std::string lowerStart = toLowerCase(start);
     std::string lowerEnd = toLowerCase(end);
@@ -241,75 +324,58 @@ std::string getTextBetweenSubstrings(const std::string& text, const std::string&
     size_t startPos = lowerText.find(lowerStart);
     size_t endPos = lowerText.find(lowerEnd, startPos + lowerStart.length());
 
-    if (startPos != std::string::npos && endPos != std::string::npos) {
+    if (startPos != std::string::npos && endPos != std::string::npos)
+    {
         return text.substr(startPos + lowerStart.length(), endPos - (startPos + lowerStart.length()));
-    } else {
+    }
+    else
+    {
         return "";
     }
 }
 
-std::string runCommandWithInputPipe(const std::string& command, const std::string& input) {
-    std::string result;
-
-    // Open a pipe to the command in write mode to send the input
-    FILE* pipe = popen((command + " 2>&1").c_str(), "w");
-    if (!pipe) {
-        throw std::runtime_error("popen() failed to open pipe for writing!");
-    }
-
-    // Write input to the pipe
-    fwrite(input.c_str(), sizeof(char), input.size(), pipe);
-    fclose(pipe); // Close the pipe after writing input
-
-    // Open a new pipe to read the output
-    pipe = popen((command + " 2>&1").c_str(), "r");
-    if (!pipe) {
-        throw std::runtime_error("popen() failed to open pipe for reading!");
-    }
-
-    // Read the output of the command
-    char buffer[128];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-    }
-
-    int returnCode = pclose(pipe);
-    if (returnCode != 0) {
-        throw std::runtime_error("Command failed with return code " + std::to_string(returnCode));
-    }
-
-    return result;
-}
-
 std::string lastRestOfText = "";
 
-int main(int argc, char ** argv) {
+int main(int argc, char **argv)
+{
+
+    const char *api_key = std::getenv("OPENAI_API_KEY");
+    if (!api_key || api_key[0] == '\0')
+    {
+        std::cerr << "Error: OPENAI_API_KEY is not set or empty" << std::endl;
+        exit(1);
+    }
+    OpenAIChatGPT chatGPT(api_key);
+
+
     whisper_params params;
 
-    if (whisper_params_parse(argc, argv, params) == false) {
+    if (whisper_params_parse(argc, argv, params) == false)
+    {
         return 1;
     }
 
-    params.keep_ms   = std::min(params.keep_ms,   params.step_ms);
+    params.keep_ms = std::min(params.keep_ms, params.step_ms);
     params.length_ms = std::max(params.length_ms, params.step_ms);
 
-    const int n_samples_step = (1e-3*params.step_ms  )*WHISPER_SAMPLE_RATE;
-    const int n_samples_len  = (1e-3*params.length_ms)*WHISPER_SAMPLE_RATE;
-    const int n_samples_keep = (1e-3*params.keep_ms  )*WHISPER_SAMPLE_RATE;
-    const int n_samples_30s  = (1e-3*30000.0         )*WHISPER_SAMPLE_RATE;
+    const int n_samples_step = (1e-3 * params.step_ms) * WHISPER_SAMPLE_RATE;
+    const int n_samples_len = (1e-3 * params.length_ms) * WHISPER_SAMPLE_RATE;
+    const int n_samples_keep = (1e-3 * params.keep_ms) * WHISPER_SAMPLE_RATE;
+    const int n_samples_30s = (1e-3 * 30000.0) * WHISPER_SAMPLE_RATE;
 
     const bool use_vad = n_samples_step <= 0; // sliding window mode uses VAD
 
     const int n_new_line = !use_vad ? std::max(1, params.length_ms / params.step_ms - 1) : 1; // number of steps to print new line
 
-    params.no_timestamps  = !use_vad;
-    params.no_context    |= use_vad;
-    params.max_tokens     = 0;
+    params.no_timestamps = !use_vad;
+    params.no_context |= use_vad;
+    params.max_tokens = 0;
 
     // init audio
 
     audio_async audio(params.length_ms);
-    if (!audio.init(params.capture_id, WHISPER_SAMPLE_RATE)) {
+    if (!audio.init(params.capture_id, WHISPER_SAMPLE_RATE))
+    {
         fprintf(stderr, "%s: audio.init() failed!\n", __func__);
         return 1;
     }
@@ -317,7 +383,8 @@ int main(int argc, char ** argv) {
     audio.resume();
 
     // whisper init
-    if (params.language != "auto" && whisper_lang_id(params.language.c_str()) == -1){
+    if (params.language != "auto" && whisper_lang_id(params.language.c_str()) == -1)
+    {
         fprintf(stderr, "error: unknown language '%s'\n", params.language.c_str());
         whisper_print_usage(argc, argv, params);
         exit(0);
@@ -325,12 +392,12 @@ int main(int argc, char ** argv) {
 
     struct whisper_context_params cparams = whisper_context_default_params();
 
-    cparams.use_gpu    = params.use_gpu;
+    cparams.use_gpu = params.use_gpu;
     cparams.flash_attn = params.flash_attn;
 
-    struct whisper_context * ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
+    struct whisper_context *ctx = whisper_init_from_file_with_params(params.model.c_str(), cparams);
 
-    std::vector<float> pcmf32    (n_samples_30s, 0.0f);
+    std::vector<float> pcmf32(n_samples_30s, 0.0f);
     std::vector<float> pcmf32_old;
     std::vector<float> pcmf32_new(n_samples_30s, 0.0f);
 
@@ -339,8 +406,10 @@ int main(int argc, char ** argv) {
     // print some info about the processing
     {
         fprintf(stderr, "\n");
-        if (!whisper_is_multilingual(ctx)) {
-            if (params.language != "en" || params.translate) {
+        if (!whisper_is_multilingual(ctx))
+        {
+            if (params.language != "en" || params.translate)
+            {
                 params.language = "en";
                 params.translate = false;
                 fprintf(stderr, "%s: WARNING: model is not multilingual, ignoring language and translation options\n", __func__);
@@ -349,17 +418,20 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "%s: processing %d samples (step = %.1f sec / len = %.1f sec / keep = %.1f sec), %d threads, lang = %s, task = %s, timestamps = %d ...\n",
                 __func__,
                 n_samples_step,
-                float(n_samples_step)/WHISPER_SAMPLE_RATE,
-                float(n_samples_len )/WHISPER_SAMPLE_RATE,
-                float(n_samples_keep)/WHISPER_SAMPLE_RATE,
+                float(n_samples_step) / WHISPER_SAMPLE_RATE,
+                float(n_samples_len) / WHISPER_SAMPLE_RATE,
+                float(n_samples_keep) / WHISPER_SAMPLE_RATE,
                 params.n_threads,
                 params.language.c_str(),
                 params.translate ? "translate" : "transcribe",
                 params.no_timestamps ? 0 : 1);
 
-        if (!use_vad) {
+        if (!use_vad)
+        {
             fprintf(stderr, "%s: n_new_line = %d, no_context = %d\n", __func__, n_new_line, params.no_context);
-        } else {
+        }
+        else
+        {
             fprintf(stderr, "%s: using VAD, will transcribe on speech activity\n", __func__);
         }
 
@@ -371,9 +443,11 @@ int main(int argc, char ** argv) {
     bool is_running = true;
 
     std::ofstream fout;
-    if (params.fname_out.length() > 0) {
+    if (params.fname_out.length() > 0)
+    {
         fout.open(params.fname_out);
-        if (!fout.is_open()) {
+        if (!fout.is_open())
+        {
             fprintf(stderr, "%s: failed to open output file '%s'!\n", __func__, params.fname_out.c_str());
             return 1;
         }
@@ -381,7 +455,8 @@ int main(int argc, char ** argv) {
 
     wav_writer wavWriter;
     // save wav file
-    if (params.save_audio) {
+    if (params.save_audio)
+    {
         // Get current date/time for filename
         time_t now = time(0);
         char buffer[80];
@@ -393,37 +468,43 @@ int main(int argc, char ** argv) {
     printf("[Start speaking]\n");
     fflush(stdout);
 
-    auto t_last  = std::chrono::high_resolution_clock::now();
+    auto t_last = std::chrono::high_resolution_clock::now();
     const auto t_start = t_last;
-
 
     std::string last_transcript = "";
 
     // main audio loop
-    while (is_running) {
-        if (params.save_audio) {
+    while (is_running)
+    {
+        if (params.save_audio)
+        {
             wavWriter.write(pcmf32_new.data(), pcmf32_new.size());
         }
         // handle Ctrl + C
         is_running = sdl_poll_events();
 
-        if (!is_running) {
+        if (!is_running)
+        {
             break;
         }
 
         // process new audio
 
-        if (!use_vad) {
-            while (true) {
+        if (!use_vad)
+        {
+            while (true)
+            {
                 audio.get(params.step_ms, pcmf32_new);
 
-                if ((int) pcmf32_new.size() > 2*n_samples_step) {
+                if ((int)pcmf32_new.size() > 2 * n_samples_step)
+                {
                     fprintf(stderr, "\n\n%s: WARNING: cannot process audio fast enough, dropping audio ...\n\n", __func__);
                     audio.clear();
                     continue;
                 }
 
-                if ((int) pcmf32_new.size() >= n_samples_step) {
+                if ((int)pcmf32_new.size() >= n_samples_step)
+                {
                     audio.clear();
                     break;
                 }
@@ -434,24 +515,28 @@ int main(int argc, char ** argv) {
             const int n_samples_new = pcmf32_new.size();
 
             // take up to params.length_ms audio from previous iteration
-            const int n_samples_take = std::min((int) pcmf32_old.size(), std::max(0, n_samples_keep + n_samples_len - n_samples_new));
+            const int n_samples_take = std::min((int)pcmf32_old.size(), std::max(0, n_samples_keep + n_samples_len - n_samples_new));
 
-            //printf("processing: take = %d, new = %d, old = %d\n", n_samples_take, n_samples_new, (int) pcmf32_old.size());
+            // printf("processing: take = %d, new = %d, old = %d\n", n_samples_take, n_samples_new, (int) pcmf32_old.size());
 
             pcmf32.resize(n_samples_new + n_samples_take);
 
-            for (int i = 0; i < n_samples_take; i++) {
+            for (int i = 0; i < n_samples_take; i++)
+            {
                 pcmf32[i] = pcmf32_old[pcmf32_old.size() - n_samples_take + i];
             }
 
-            memcpy(pcmf32.data() + n_samples_take, pcmf32_new.data(), n_samples_new*sizeof(float));
+            memcpy(pcmf32.data() + n_samples_take, pcmf32_new.data(), n_samples_new * sizeof(float));
 
             pcmf32_old = pcmf32;
-        } else {
-            const auto t_now  = std::chrono::high_resolution_clock::now();
+        }
+        else
+        {
+            const auto t_now = std::chrono::high_resolution_clock::now();
             const auto t_diff = std::chrono::duration_cast<std::chrono::milliseconds>(t_now - t_last).count();
 
-            if (t_diff < 2000) {
+            if (t_diff < 2000)
+            {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
                 continue;
@@ -459,9 +544,12 @@ int main(int argc, char ** argv) {
 
             audio.get(2000, pcmf32_new);
 
-            if (::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, false)) {
+            if (::vad_simple(pcmf32_new, WHISPER_SAMPLE_RATE, 1000, params.vad_thold, params.freq_thold, false))
+            {
                 audio.get(params.length_ms, pcmf32);
-            } else {
+            }
+            else
+            {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
                 continue;
@@ -474,44 +562,48 @@ int main(int argc, char ** argv) {
         {
             whisper_full_params wparams = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
 
-            wparams.print_progress   = false;
-            wparams.print_special    = params.print_special;
-            wparams.print_realtime   = false;
+            wparams.print_progress = false;
+            wparams.print_special = params.print_special;
+            wparams.print_realtime = false;
             wparams.print_timestamps = !params.no_timestamps;
-            wparams.translate        = params.translate;
-            wparams.single_segment   = !use_vad;
-            wparams.max_tokens       = params.max_tokens;
-            wparams.language         = params.language.c_str();
-            wparams.n_threads        = params.n_threads;
+            wparams.translate = params.translate;
+            wparams.single_segment = !use_vad;
+            wparams.max_tokens = params.max_tokens;
+            wparams.language = params.language.c_str();
+            wparams.n_threads = params.n_threads;
 
-            wparams.audio_ctx        = params.audio_ctx;
+            wparams.audio_ctx = params.audio_ctx;
 
-            wparams.tdrz_enable      = params.tinydiarize; // [TDRZ]
+            wparams.tdrz_enable = params.tinydiarize; // [TDRZ]
 
             // disable temperature fallback
-            //wparams.temperature_inc  = -1.0f;
-            wparams.temperature_inc  = params.no_fallback ? 0.0f : wparams.temperature_inc;
+            // wparams.temperature_inc  = -1.0f;
+            wparams.temperature_inc = params.no_fallback ? 0.0f : wparams.temperature_inc;
 
-            wparams.prompt_tokens    = params.no_context ? nullptr : prompt_tokens.data();
-            wparams.prompt_n_tokens  = params.no_context ? 0       : prompt_tokens.size();
+            wparams.prompt_tokens = params.no_context ? nullptr : prompt_tokens.data();
+            wparams.prompt_n_tokens = params.no_context ? 0 : prompt_tokens.size();
 
-            if (whisper_full(ctx, wparams, pcmf32.data(), pcmf32.size()) != 0) {
+            if (whisper_full(ctx, wparams, pcmf32.data(), pcmf32.size()) != 0)
+            {
                 fprintf(stderr, "%s: failed to process audio\n", argv[0]);
                 return 6;
             }
 
             // print result;
             {
-                if (!use_vad) {
+                if (!use_vad)
+                {
                     printf("\33[2K\r");
 
                     // print long empty line to clear the previous line
                     printf("%s", std::string(100, ' ').c_str());
 
                     printf("\33[2K\r");
-                } else {
-                    const int64_t t1 = (t_last - t_start).count()/1000000;
-                    const int64_t t0 = std::max(0.0, t1 - pcmf32.size()*1000.0/WHISPER_SAMPLE_RATE);
+                }
+                else
+                {
+                    const int64_t t1 = (t_last - t_start).count() / 1000000;
+                    const int64_t t0 = std::max(0.0, t1 - pcmf32.size() * 1000.0 / WHISPER_SAMPLE_RATE);
 
                     // printf("\n");
                     // printf("### Transcription %d START | t0 = %d ms | t1 = %d ms\n", n_iter, (int) t0, (int) t1);
@@ -519,58 +611,77 @@ int main(int argc, char ** argv) {
                 }
 
                 const int n_segments = whisper_full_n_segments(ctx);
-                for (int i = 0; i < n_segments; ++i) {
-                    const char * text = whisper_full_get_segment_text(ctx, i);
+                for (int i = 0; i < n_segments; ++i)
+                {
+                    const char *text = whisper_full_get_segment_text(ctx, i);
 
-                    if (params.no_timestamps) {
+                    if (params.no_timestamps)
+                    {
                         printf("BB %s", text);
 
                         last_transcript += toLowerCase(text);
-                        if (containsSubstring(last_transcript, "i need to") && containsSubstring(last_transcript, "i believe")) {
-                            std::string gpt_input = getTextBetweenSubstrings(last_transcript, "i need to", "i believe");
+                        if (containsSubstring(last_transcript, SUPER_SECRET_START_STRING) && containsSubstring(last_transcript, "i believe"))
+                        {
+                            std::string gpt_input = getTextBetweenSubstrings(last_transcript, SUPER_SECRET_START_STRING, "i believe");
                             last_transcript = ""; // Reset last_transcript
 
-                            std::cout << "\n\n" + gpt_input + "\n\n" << std::endl;
-                            try {
+                            std::cout << "\n\n" + gpt_input + "\n\n"
+                                      << std::endl;
+                            try
+                            {
                                 std::string commandwoargs = "/opt/homebrew/bin/chatgpt"; // Update this with the correct path
                                 std::vector<std::string> args = {};
 
-                                std::string output = runCommandWithQuotedArg(commandwoargs, gpt_input);
-                                std::cout << "Output from   :" << std::endl << output << std::endl;
-                            } catch (const std::exception& e) {
+                                std::string output = chatGPT.askQuestion(gpt_input);
+                                // std::string output = runCommandWithQuotedArg(commandwoargs, gpt_input);
+                                std::cout << "Output from   :" << std::endl
+                                          << output << std::endl;
+                            }
+                            catch (const std::exception &e)
+                            {
                                 std::cerr << "Error: " << e.what() << std::endl;
                             }
                         }
 
                         fflush(stdout);
 
-                        if (params.fname_out.length() > 0) {
+                        if (params.fname_out.length() > 0)
+                        {
                             fout << text;
                         }
-                    } else {
+                    }
+                    else
+                    {
                         const int64_t t0 = whisper_full_get_segment_t0(ctx, i);
                         const int64_t t1 = whisper_full_get_segment_t1(ctx, i);
 
                         std::string output = "[" + to_timestamp(t0, false) + " S--> " + to_timestamp(t1, false) + "]  " + text;
 
                         std::string lowerText = toLowerCase(text);
-                        std::string substring = "i need to";
+                        std::string substring = SUPER_SECRET_START_STRING;
 
-                        if (containsSubstring(lowerText, substring)) {
+                        if (containsSubstring(lowerText, substring))
+                        {
                             std::string restOfText = getTextAfterSubstring(lowerText, substring);
-                            if (restOfText != lastRestOfText) {
+                            if (restOfText != lastRestOfText)
+                            {
                                 lastRestOfText = restOfText;
 
-                                std::cout << "\n\n" + restOfText + "\n\n" << std::endl;
-                                try {
+                                std::cout << "\n\n" + restOfText + "\n\n"
+                                          << std::endl;
+                                try
+                                {
                                     // std::string command = "/opt/homebrew/bin/chatgpt -n";
 
                                     std::string commandwoargs = "/opt/homebrew/bin/chatgpt"; // Update this with the correct path
                                     std::vector<std::string> args = {};
-
-                                    std::string output = runCommandWithQuotedArg(commandwoargs, restOfText);
-                                    std::cout << "Output from   :" << std::endl << output << std::endl;
-                                } catch (const std::exception& e) {
+                                    std::string output = chatGPT.askQuestion(restOfText);
+                                    // std::string output = runCommandWithQuotedArg(commandwoargs, restOfText);
+                                    std::cout << "Output from   :" << std::endl
+                                              << output << std::endl;
+                                }
+                                catch (const std::exception &e)
+                                {
                                     std::cerr << "Error: " << e.what() << std::endl;
                                 }
                             }
@@ -590,17 +701,20 @@ int main(int argc, char ** argv) {
                         // printf("%s", output.c_str());
                         fflush(stdout);
 
-                        if (params.fname_out.length() > 0) {
+                        if (params.fname_out.length() > 0)
+                        {
                             fout << output;
                         }
                     }
                 }
 
-                if (params.fname_out.length() > 0) {
+                if (params.fname_out.length() > 0)
+                {
                     fout << std::endl;
                 }
 
-                if (use_vad) {
+                if (use_vad)
+                {
                     // printf("\n");
                     // printf("### Transcription %d END\n", n_iter);
                 }
@@ -608,20 +722,24 @@ int main(int argc, char ** argv) {
 
             ++n_iter;
 
-            if (!use_vad && (n_iter % n_new_line) == 0) {
+            if (!use_vad && (n_iter % n_new_line) == 0)
+            {
                 printf("\n");
 
                 // keep part of the audio for next iteration to try to mitigate word boundary issues
                 pcmf32_old = std::vector<float>(pcmf32.end() - n_samples_keep, pcmf32.end());
 
                 // Add tokens of the last full length segment as the prompt
-                if (!params.no_context) {
+                if (!params.no_context)
+                {
                     prompt_tokens.clear();
 
                     const int n_segments = whisper_full_n_segments(ctx);
-                    for (int i = 0; i < n_segments; ++i) {
+                    for (int i = 0; i < n_segments; ++i)
+                    {
                         const int token_count = whisper_full_n_tokens(ctx, i);
-                        for (int j = 0; j < token_count; ++j) {
+                        for (int j = 0; j < token_count; ++j)
+                        {
                             prompt_tokens.push_back(whisper_full_get_token_id(ctx, i, j));
                         }
                     }
